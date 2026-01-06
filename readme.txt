@@ -1,0 +1,1 @@
+glink: ld plugin that enables linking against ghidra repositories
