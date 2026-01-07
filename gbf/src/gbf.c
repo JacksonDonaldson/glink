@@ -1,76 +1,140 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include "localbufferfile.h"
 #include "gbf.h"
+#include "common.h"
 
-short readshort(byte * buffer, int offset){
-    return (buffer[offset] << 8) | buffer[offset+1];
+
+
+uint get_gbf_file(char *ghidra_repo_path, char *program_name, char* gbf_file_path_out, uint gbf_file_path_size) {
+    //.gpr is just the pointer to the directory. Assume they want the repo w/ the same name.
+    char internal_ghidra_path[MAX_PATH];
+    strncpy(internal_ghidra_path, ghidra_repo_path, sizeof(internal_ghidra_path) - 1);
+    internal_ghidra_path[sizeof(internal_ghidra_path) - 1] = '\0';
+
+    if (strncmp(internal_ghidra_path + strlen(internal_ghidra_path) - 4, ".gpr", 4) == 0) {
+        internal_ghidra_path[strlen(internal_ghidra_path) - 4] = '\0';
+        strcat(internal_ghidra_path, ".rep");
+    }
+
+    char index_dat_path[MAX_PATH];
+    snprintf(index_dat_path, sizeof(index_dat_path), "%s/idata/~index.dat", internal_ghidra_path);
+
+    FILE *index_dat_file = fopen(index_dat_path, "r");
+    if (!index_dat_file) {
+        return E_NOT_GHIDRA_REPO;
+    }
+
+    char* match = NULL;
+    char index_data[MAX_PATH];
+    while (fgets(index_data, sizeof(index_data), index_dat_file)) {
+        if ((match = strstr(index_data, program_name))) {
+            break;
+        }
+    }
+    fclose(index_dat_file);
+
+    if(!match || match - index_data < 9){
+        return E_NO_GBF_FILE;
+    }
+
+    char folder_0 = *(match - 5);
+    char folder_1 = *(match - 4);
+
+    *(match-1) = '\0';
+
+    char gbf_folder_path[MAX_PATH];
+    snprintf(gbf_folder_path, sizeof(gbf_folder_path), "%s/idata/%c%c/~%s.db/", internal_ghidra_path, folder_0, folder_1, match - 9);
+
+    DIR *dir = opendir(gbf_folder_path);
+    if (!dir) {
+        return E_NO_GBF_FILE;
+    }
+
+    struct dirent *entry;
+    struct stat st;
+    char candidate_path[MAX_PATH * 2];
+    time_t newest_mtime = 0;
+    int found = 0;
+
+    while ((entry = readdir(dir)) != NULL) {
+        size_t len = strlen(entry->d_name);
+        if (len < 4 || strcmp(entry->d_name + len - 4, ".gbf") != 0)
+            continue;
+        snprintf(candidate_path, sizeof(candidate_path), "%s%s", gbf_folder_path, entry->d_name);
+        if (stat(candidate_path, &st) == 0 && S_ISREG(st.st_mode)) {
+            if (!found || st.st_mtime > newest_mtime) {
+                strncpy(gbf_file_path_out, candidate_path, gbf_file_path_size - 1);
+                gbf_file_path_out[gbf_file_path_size - 1] = '\0';
+                newest_mtime = st.st_mtime;
+                found = 1;
+            }
+        }
+    }
+
+    closedir(dir);
+
+    if (!found) {
+        return E_NO_GBF_FILE;
+    }
+
+    return E_OK;
 }
 
-int readint(byte * buffer, int offset){
-    return (buffer[offset] << 24) | (buffer[offset+1] << 16) | (buffer[offset+2] << 8) | buffer[offset+3];
-}
-long long readlong(byte * buffer, int offset){
-    return (long long)buffer[offset] << 56 | (long long)buffer[offset+1] << 48 | (long long)buffer[offset+2] << 40 | (long long)buffer[offset+3] << 32 |
-           (long long)buffer[offset+4] << 24 | (long long)buffer[offset+5] << 16 | (long long)buffer[offset+6] << 8 | (long long)buffer[offset+7];
-}
+uint open_gbf(char* gbf_file_path, gbf * gbuf) {
 
-uint find_master_table(char* gbf_file_path, localbufferfile* lbf) {
-    create_localbufferfile(gbf_file_path, lbf);
+    create_localbufferfile(gbf_file_path, &gbuf->lbf);
 
-    byte * master_buf = get_buffer(lbf, 1);
+    byte * master_buf = get_buffer(&gbuf->lbf, 1);
 
     if (master_buf[0] != 0x09) {
-        fprintf(stderr, "Error: Expected chained buffer byte\n");
-        exit(1);
+        return E_INVALID_GBF_MAYBE_UNSUPPORTED_GHIDRA_VERSION;
     }
     uint size = readint(master_buf, 1);
     if(size < 9){
-        fprintf(stderr, "Error: parm size too small to contain master table offset\n");
-        exit(1);
+        return E_INVALID_GBF_MAYBE_UNSUPPORTED_GHIDRA_VERSION;
     }
     byte version = master_buf[5];
     if(version != 0x01){
-        fprintf(stderr, "Error: Unsupported parm version %02x\n", version);
-        exit(1);
+        return E_INVALID_GBF_UNSUPPORTED_GHIDRA_VERSION;
     }
 
     uint master_table_offset = readint(master_buf, 6);
 
     free(master_buf);
-    return master_table_offset;
+    gbuf->master_table_offset = master_table_offset;
+
+    return E_OK;
 }
 
-//if table_name is found, fills out tabledata
-uint get_tabledata_from_master_table(localbufferfile* lbf, char* table_name, uint master_table_offset, tabledata * data) {
-    memset(data, 0, sizeof(tabledata));
+//if table_name is found, fills out gbftable
+uint get_gbftable(gbf* gbuf, char* table_name, gbftable * data) {
+    memset(data, 0, sizeof(gbftable));
 
     // Read the master table
-    byte *master_table = get_buffer(lbf, master_table_offset + 1);
+    byte *master_table = get_buffer(&gbuf->lbf, gbuf->master_table_offset + 1);
 
     uint target_len = strlen(table_name);
     if (target_len >= 0x80){
-        fprintf(stderr, "Error: table name too long\n");
-        exit(1);
+        return E_NAME_TOO_LONG;
     }
 
     byte node_type = master_table[0];
     if (node_type != 0x01) {
-        fprintf(stderr, "Error: expected master to be node type LONGKEY_VAR_REC_NODE \n");
-        exit(1);
+        return E_INVALID_NODE_TYPE;
     }
 
     uint record_count = readint(master_table, 1);
     // printf("master table has %u records\n", record_count);
     uint record_base_offset = 13;
     for(int i = 0; i < record_count; i++){
-        long long key = readlong(master_table, record_base_offset + i * 13);
-        (void)key; // unused
+        // long long key = readlong(master_table, record_base_offset + i * 13);
         uint rec_offset = readint(master_table, record_base_offset + i * 13 + 8);
         byte ind_flag = master_table[record_base_offset + i * 13 + 12];
-        // printf("record %d: key=%016llx, offset=%08x, ind_flag=%02x\n", i, key, rec_offset, ind_flag);
-
+        
         if(ind_flag == 0){
             //the record has been stored within a chained DBBuffer at rec_offset
             byte* record = master_table + rec_offset;
@@ -82,15 +146,15 @@ uint get_tabledata_from_master_table(localbufferfile* lbf, char* table_name, uin
             if(memcmp(record + 4, table_name, table_name_len) != 0){
                 continue;
             }
-            //we've found the table of interest. Let's actually fill out tabledata.
-            data->lbf = lbf;
+            //we've found the table of interest. Let's actually fill out gbftable.
+            data->lbf = &gbuf->lbf;
 
             memcpy(data->name, table_name, target_len);
             data->name[target_len] = '\0';
             
 
             record += table_name_len + 4;
-            printf("Found table: %s at %08x\n", table_name, rec_offset);
+            // printf("Found table: %s at %08x\n", table_name, rec_offset);
             data->schema_version = readint(record, 0);
             data->root_buffer_id = readint(record, 4);
             data->key_type = record[8];
@@ -134,63 +198,64 @@ uint get_tabledata_from_master_table(localbufferfile* lbf, char* table_name, uin
             data->max_key = readlong(record, 4);
             data->record_count = readint(record, 12);
             free(master_table);
-            return 0;
+            return E_OK;
         }
     }
 
     free(master_table);
-    return 1;
+    return E_TABLE_NOT_FOUND;
 }
 
-uint get_iterator(tabledata *data, tablerecord *record) {
+uint open_first_record(gbftable *data, gbfrecord *record) {
     record->table_data = data;
     record->current_record = -1;
     record->buffer = get_buffer(record->table_data->lbf, record->table_data->root_buffer_id + 1);
     if(record->buffer[0] != 0x01){
-        fprintf(stderr, "Error: Expected VarRecNode\n");
-        exit(1);
+        return E_INVALID_NODE_TYPE;
     }
     if(readint(record->buffer, 1) != record->table_data->record_count){
-        fprintf(stderr, "Error: record count mismatch\n");
-        exit(1);
+        return E_RECORD_COUNT_MISMATCH;
     }
 
     next_record(record);
-    return 0;
+    return E_OK;
 }
 
-uint next_record(tablerecord *record) {
+uint close_record(gbfrecord *record) {
+    free(record->buffer);
+    return E_OK;
+}
+
+uint next_record(gbfrecord *record) {
     record->current_record++;
     if (record->current_record >= record->table_data->record_count) {
-        return 1;
+        return E_NO_MORE_RECORDS;
     }
     record->id = readlong(record->buffer, 13 + record->current_record * 13);
-    return 0;
+    return E_OK;
 }
 
-uint get_record_by_id(tabledata* data, tablerecord *record, unsigned long long id) {
+uint open_record_by_id(gbftable* data, gbfrecord *record, unsigned long long id) {
     record->table_data = data;
     record->buffer = get_buffer(record->table_data->lbf, record->table_data->root_buffer_id + 1);
     if(record->buffer[0] != 0x01){
-        fprintf(stderr, "Error: Expected VarRecNode\n");
-        exit(1);
+        return E_INVALID_NODE_TYPE;
     }
     if(readint(record->buffer, 1) != record->table_data->record_count){
-        fprintf(stderr, "Error: record count mismatch\n");
-        exit(1);
+        return E_RECORD_COUNT_MISMATCH;
     }
 
     for(record->current_record = 0; record->current_record < record->table_data->record_count; record->current_record++){
         unsigned long long current_id = readlong(record->buffer, 13 + record->current_record * 13);
         if(current_id == id){
             record->id = current_id;
-            return 0;
+            return E_OK;
         }
     }
-    return E_NOT_FOUND;
+    return E_RECORD_NOT_FOUND;
 }
 
-byte * get_record_buffer(tablerecord *record) {
+byte * get_record_buffer(gbfrecord *record) {
     uint record_offset = readint(record->buffer, 21 + record->current_record * 13);
     return record->buffer + record_offset;
 }
@@ -205,7 +270,7 @@ uint handle_field(byte field_type, byte ** record_buffer_ptr, void *out, uint ou
         case 0x00: // BYTE
             if(want_output){
                 if(out_len < 1){
-                    return 2;
+                    return E_INSUFFICIENT_SPACE;
                 }
                 memcpy(out, record_buffer, 1);
             }
@@ -214,7 +279,7 @@ uint handle_field(byte field_type, byte ** record_buffer_ptr, void *out, uint ou
         case 0x01: // SHORT
             if(want_output){
                 if(out_len < 2){
-                    return 2;
+                    return E_INSUFFICIENT_SPACE;
                 }
                 tempshort = readshort(record_buffer, 0);
                 memcpy(out, &tempshort, 2);
@@ -224,7 +289,7 @@ uint handle_field(byte field_type, byte ** record_buffer_ptr, void *out, uint ou
         case 0x02: // INT
             if(want_output){
                 if(out_len < 4){
-                    return 2;
+                    return E_INSUFFICIENT_SPACE;
                 }
                 tempuint = readint(record_buffer, 0);
                 memcpy(out, &tempuint, 4);
@@ -234,7 +299,7 @@ uint handle_field(byte field_type, byte ** record_buffer_ptr, void *out, uint ou
         case 0x03: // LONG
             if(want_output){
                 if(out_len < 8){
-                    return 2;
+                    return E_INSUFFICIENT_SPACE;
                 }
                 templong = readlong(record_buffer, 0);
                 memcpy(out, &templong, 8);
@@ -248,7 +313,7 @@ uint handle_field(byte field_type, byte ** record_buffer_ptr, void *out, uint ou
             }
             if(want_output){
                 if(out_len < str_len + 1){
-                    return 2;
+                    return E_INSUFFICIENT_SPACE;
                 }
                 memcpy(out, record_buffer + 4, str_len);
                 ((char*)out)[str_len] = '\0';
@@ -259,7 +324,7 @@ uint handle_field(byte field_type, byte ** record_buffer_ptr, void *out, uint ou
             uint bin_len = readint(record_buffer, 0);
             if(want_output){
                 if(out_len < bin_len){
-                    return 2;
+                    return E_INSUFFICIENT_SPACE;
                 }
                 memcpy(out, record_buffer + 4, bin_len);
             }
@@ -268,7 +333,7 @@ uint handle_field(byte field_type, byte ** record_buffer_ptr, void *out, uint ou
         case 0x06: // BOOLEAN
             if(want_output){
                 if(out_len < 1){
-                    return 2;
+                    return E_INSUFFICIENT_SPACE;
                 }
                 memcpy(out, record_buffer, 1);
             }
@@ -277,21 +342,20 @@ uint handle_field(byte field_type, byte ** record_buffer_ptr, void *out, uint ou
         case 0x07: // FIXED_10_TYPE
             if(want_output){
                 if(out_len < 10){
-                    return 2;
+                    return E_INSUFFICIENT_SPACE;
                 }
                 memcpy(out, record_buffer, 10);
             }
             record_buffer += 10;
             break;
         default:
-            fprintf(stderr, "Error: unsupported field type %02x\n", field_type);
-            exit(1);
+            return E_UNSUPPORTED_FIELD_TYPE;
     }
     *record_buffer_ptr = record_buffer;
     return 0;
 }
 
-uint get_record_field(tablerecord *record, char *target_name, void *out, uint out_len) {
+uint get_record_field(gbfrecord *record, char *target_name, void *out, uint out_len) {
     char* field_names_ptr = record->table_data->schema_field_names;
     uint target_name_len = strlen(target_name);
 
@@ -299,18 +363,16 @@ uint get_record_field(tablerecord *record, char *target_name, void *out, uint ou
     //skip the first field name (it's the primary key name)
     char* after_semicolon = strstr(field_names_ptr, ";");
     if(after_semicolon == NULL){
-        fprintf(stderr, "Error: corrupted field names?\n");
-        exit(1);
+        return E_CORRUPT_FIELD_NAMES;
     }
     field_names_ptr = after_semicolon + 1;
     //then search for the target name
-    byte target_field_index = -1;
+    uint target_field_index = -1;
     uint field_count = record->table_data->schema_field_types_len;
     for(int i = 0; i < field_count; i++){
         after_semicolon = strstr(field_names_ptr, ";");
         if(after_semicolon == NULL){
-            fprintf(stderr, "Error: corrupted field names?\n");
-            exit(1);
+            return E_CORRUPT_FIELD_NAMES;
         }
         uint field_name_len = after_semicolon - field_names_ptr;
         if(field_name_len == target_name_len && memcmp(field_names_ptr, target_name, field_name_len) == 0){
@@ -320,8 +382,8 @@ uint get_record_field(tablerecord *record, char *target_name, void *out, uint ou
             field_names_ptr = after_semicolon + 1;
         }
     }
-    if(target_field_index == 0xff){
-        return E_NOT_FOUND;
+    if(target_field_index == -1){
+        return E_FIELD_NOT_IN_SCHEMA;
     }
 
     //field_names_ptr += 4;
@@ -350,14 +412,14 @@ uint get_record_field(tablerecord *record, char *target_name, void *out, uint ou
             return result;
         }
         if(want_output){
-            return 0;
+            return E_OK;
         }
     }
-    return 5;
+    return E_FIELD_NOT_FOUND;
 }
 
-void print_tabledata(tabledata * data) {
-    printf("tabledata:\n");
+void print_gbftable(gbftable * data) {
+    printf("gbftable:\n");
     printf("  name: %s\n", data->name);
     printf("  schema version: %u\n", data->schema_version);
     printf("  root buffer id: %u\n", data->root_buffer_id);
@@ -378,8 +440,8 @@ void print_tabledata(tabledata * data) {
     printf("  record count: %u\n", data->record_count);
 }
 
-void print_record(tablerecord *record) {
-    printf("tablerecord:\n");
+void print_record(gbfrecord *record) {
+    printf("gbfrecord:\n");
     char *field_names = record->table_data->schema_field_names;
     char *field_start = strstr(field_names, ";") + 1;
     if(field_start == NULL) {
@@ -436,7 +498,7 @@ void print_record(tablerecord *record) {
     }
 }
 
-void free_tabledata(tabledata * data) {
+void free_gbftable(gbftable * data) {
     if (data->schema_field_types_len > 0) {
         free(data->schema_field_types);
     }

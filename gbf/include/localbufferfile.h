@@ -1,16 +1,9 @@
 #ifndef LOCALBUFFERFILE_H
 #define LOCALBUFFERFILE_H
+#include "gbf.h"
 
-typedef unsigned char byte;
-typedef unsigned int uint;
 
 #define BUFFER_PREFIX_SIZE 5
-
-typedef struct {
-    FILE * file;
-    uint buf_len;
-} localbufferfile;
-
 
 
 void create_localbufferfile(char * filename, localbufferfile * file);
