@@ -9,23 +9,35 @@
 
 
 
-uint get_gbf_file(char *ghidra_repo_path, char *program_name, char* gbf_file_path_out, uint gbf_file_path_size) {
-    //.gpr is just the pointer to the directory. Assume they want the repo w/ the same name.
+uint get_gbf_file(const char *ghidra_repo_path, char *program_name, char* gbf_file_path_out, uint gbf_file_path_size) {
     char internal_ghidra_path[MAX_PATH];
     strncpy(internal_ghidra_path, ghidra_repo_path, sizeof(internal_ghidra_path) - 1);
     internal_ghidra_path[sizeof(internal_ghidra_path) - 1] = '\0';
 
+    if(strncmp(internal_ghidra_path + strlen(internal_ghidra_path) - 4, ".gbf", 4) == 0){
+        //Transform gbf to gbf? sure
+        strncpy(gbf_file_path_out, internal_ghidra_path, gbf_file_path_size - 1);
+        gbf_file_path_out[gbf_file_path_size - 1] = '\0';
+        return E_OK;
+    }    
+
     if (strncmp(internal_ghidra_path + strlen(internal_ghidra_path) - 4, ".gpr", 4) == 0) {
+        //.gpr is just the pointer to the directory. Assume they want the repo w/ the same name.
         internal_ghidra_path[strlen(internal_ghidra_path) - 4] = '\0';
         strcat(internal_ghidra_path, ".rep");
     }
+
+    if(strncmp(internal_ghidra_path + strlen(internal_ghidra_path) - 4, ".rep", 4)){
+        return E_NOT_GHIDRA_REPO;
+    }
+
 
     char index_dat_path[MAX_PATH];
     snprintf(index_dat_path, sizeof(index_dat_path), "%s/idata/~index.dat", internal_ghidra_path);
 
     FILE *index_dat_file = fopen(index_dat_path, "r");
     if (!index_dat_file) {
-        return E_NOT_GHIDRA_REPO;
+        return E_NO_INDEX;
     }
 
     char* match = NULL;
@@ -84,9 +96,12 @@ uint get_gbf_file(char *ghidra_repo_path, char *program_name, char* gbf_file_pat
     return E_OK;
 }
 
-uint open_gbf(char* gbf_file_path, gbf * gbuf) {
+uint open_gbf(const char* gbf_file_path, gbf * gbuf) {
 
-    create_localbufferfile(gbf_file_path, &gbuf->lbf);
+    int res = create_localbufferfile(gbf_file_path, &gbuf->lbf);
+    if (res != 0) {
+        return res;
+    }
 
     byte * master_buf = get_buffer(&gbuf->lbf, 1);
 

@@ -25,6 +25,11 @@ typedef unsigned int uint;
 #define E_CORRUPT_FIELD_NAMES 15
 #define E_FIELD_NOT_IN_SCHEMA 16
 #define E_INSUFFICIENT_SPACE 17
+#define E_FILE_NOT_FOUND 19
+#define E_MAGIC_MISMATCH 20
+#define E_UNSUPPORTED_VERSION 21
+#define E_UNREASONABLE_BUFFER_LENGTH 22
+#define E_NO_INDEX 23
 
 #define MAX_PATH 256
 
@@ -73,9 +78,9 @@ gbf_file_path_out: will contain path of most recently edited ghidra backing file
 
 returns: 0 on success
 */
-uint get_gbf_file(char *ghidra_repo_path, char *program_name, char* gbf_file_path_out, uint gbf_file_path_size);
+uint get_gbf_file(const char *ghidra_repo_path, char *program_name, char* gbf_file_path_out, uint gbf_file_path_size);
 
-uint open_gbf(char* gbf_file_path, gbf* gbuf);
+uint open_gbf(const char* gbf_file_path, gbf* gbuf);
 
 // uint close_gbf(gbf* gbuf);
 

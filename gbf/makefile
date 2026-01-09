@@ -6,4 +6,4 @@ example: example/main.c libgbf.a
 	gcc -o example/example example/main.c -Iexport -L. -lgbf -static
 
 clean:
-	rm -f libgbf.so example/example
+	rm -f libgbf.so example/example gbf.o localbufferfile.o common.o libgbf.a

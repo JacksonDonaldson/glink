@@ -1,7 +1,9 @@
-#include <stdio.h>
+extern long long foo;
 
-extern int test_sym;
+typedef int (*printf_t)(const char *format, ...);
+extern printf_t printf;
+
 int main() {
-    printf("val: %08x, at: %016llx\n", test_sym, (unsigned long long)&test_sym);
+    printf("f at: %16llx", foo);
     return 0;//test_sym;
 }

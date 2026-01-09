@@ -6,9 +6,9 @@
 #define BUFFER_PREFIX_SIZE 5
 
 
-void create_localbufferfile(char * filename, localbufferfile * file);
+uint create_localbufferfile(const char * filename, localbufferfile * file);
 
-void destroy_localbufferfile(localbufferfile * file);
+uint destroy_localbufferfile(localbufferfile * file);
 
 int get_buf_len(localbufferfile * file);
 
