@@ -24,6 +24,13 @@ unsigned int sym_count = 0;
 static char option[MAX_PATH];
 
 
+static char saved_elf_file[0x80]; 
+
+
+const char* fname = "glink.ld";
+const char* empty_fname = "empty.o";
+
+
 static uint read_symbols_from_ghidra_db(const char* gbf_path) {
     gbf gbuf;
     uint res = open_gbf((char*)gbf_path, &gbuf);
@@ -103,6 +110,32 @@ static uint read_symbols_from_ghidra_db(const char* gbf_path) {
 static enum ld_plugin_status onclaim_file(const struct ld_plugin_input_file *file,
                                          int* claimed)
 {
+    /* If this input is an object file and we haven't yet saved an ELF header,
+    copy the first 0x80 bytes of the file into saved_elf_file. 
+    This allows us to create a fake object file with the same architecture 
+    as the target program, which is necessary to work around a bug in ld
+    when adding only a linker script. *
+    */
+    size_t name_len = strlen(file->name);
+    if (name_len > 2 && strcmp(file->name + name_len - 2, ".o") == 0) {
+        int already_copied = ((unsigned char)saved_elf_file[0] == 0x7f &&
+                         saved_elf_file[1] == 'E' &&
+                         saved_elf_file[2] == 'L' &&
+                         saved_elf_file[3] == 'F');
+        if (!already_copied) {
+            FILE *f = fopen(file->name, "rb");
+            if (f) {
+                size_t nr = fread(saved_elf_file, 1, sizeof(saved_elf_file), f);
+                if (nr == 0) {
+                    log(LDPL_INFO, "Glink plugin: failed to read ELF header from %s\n", file->name);
+                }
+                fclose(f);
+            } else {
+                log(LDPL_INFO, "Glink plugin: failed to open %s to read ELF header\n", file->name);
+            }
+        }
+    }
+
     //glink handles .gbf database files; it'll grab the most recent of those if given
     //[program]@[ghidra_repository].gpr files
 
@@ -119,11 +152,101 @@ static enum ld_plugin_status onclaim_file(const struct ld_plugin_input_file *fil
     if(res){
         return LDPS_ERR;
     }
+
+    res = add_symbols(handle, sym_count, symbols);
+    fprintf(stderr, "Glink plugin: add syms (count %d) result %d\n", sym_count, res);
+
     return LDPS_OK;
 }
 
+static void generate_minimal_object_file() {
+    const char *outname = "empty.so";
+    unsigned char *buf = (unsigned char*)saved_elf_file;
+    /* verify ELF magic */
+    if(!((unsigned char)buf[0] == 0x7f && buf[1] == 'E' && buf[2] == 'L' && buf[3] == 'F')){
+        log(LDPL_FATAL, "Glink plugin: Couldn't generate a minimal object file. Did you pass in any real .o files?");
+    }
 
-const char* fname = "glink.ld";
+    int ei_class = saved_elf_file[4]; /* 1=32,2=64 */
+    int ei_data = saved_elf_file[5];  /* 1=le,2=be */
+
+    /* helpers to write values with proper endianness */
+    {
+        /* local helper functions implemented as macros */
+#define WRITE16(p,v) do { \
+    if(ei_data == 2) { (p)[0] = (unsigned char)(((v) >> 8) & 0xff); (p)[1] = (unsigned char)((v) & 0xff); } \
+    else { (p)[0] = (unsigned char)((v) & 0xff); (p)[1] = (unsigned char)(((v) >> 8) & 0xff); } \
+} while(0)
+#define WRITE32(p,v) do { \
+    if(ei_data == 2) { (p)[0] = (unsigned char)(((v) >> 24) & 0xff); (p)[1] = (unsigned char)(((v) >> 16) & 0xff); (p)[2] = (unsigned char)(((v) >> 8) & 0xff); (p)[3] = (unsigned char)((v) & 0xff); } \
+    else { (p)[0] = (unsigned char)((v) & 0xff); (p)[1] = (unsigned char)(((v) >> 8) & 0xff); (p)[2] = (unsigned char)(((v) >> 16) & 0xff); (p)[3] = (unsigned char)(((v) >> 24) & 0xff); } \
+} while(0)
+#define WRITE64(p,v) do { \
+    if(ei_data == 2) { \
+        (p)[0] = (unsigned char)(((v) >> 56) & 0xff); (p)[1] = (unsigned char)(((v) >> 48) & 0xff); (p)[2] = (unsigned char)(((v) >> 40) & 0xff); (p)[3] = (unsigned char)(((v) >> 32) & 0xff); \
+        (p)[4] = (unsigned char)(((v) >> 24) & 0xff); (p)[5] = (unsigned char)(((v) >> 16) & 0xff); (p)[6] = (unsigned char)(((v) >> 8) & 0xff); (p)[7] = (unsigned char)((v) & 0xff); \
+    } else { \
+        (p)[0] = (unsigned char)((v) & 0xff); (p)[1] = (unsigned char)(((v) >> 8) & 0xff); (p)[2] = (unsigned char)(((v) >> 16) & 0xff); (p)[3] = (unsigned char)(((v) >> 24) & 0xff); \
+        (p)[4] = (unsigned char)(((v) >> 32) & 0xff); (p)[5] = (unsigned char)(((v) >> 40) & 0xff); (p)[6] = (unsigned char)(((v) >> 48) & 0xff); (p)[7] = (unsigned char)(((v) >> 56) & 0xff); \
+    } \
+} while(0)
+
+    /* offsets in header */
+    size_t e_shoff_off = (ei_class == 2) ? 40 : 32;
+    size_t e_ehsize_off = (ei_class == 2) ? 52 : 40;
+    size_t e_shentsize_off = (ei_class == 2) ? 58 : 46;
+    size_t e_shnum_off = (ei_class == 2) ? 60 : 48;
+    size_t e_shstrndx_off = (ei_class == 2) ? 62 : 50;
+
+    uint16_t ehsize = (ei_class == 2) ? 64 : 52;
+    uint16_t shentsize = (ei_class == 2) ? 64 : 40;
+
+    /* set file type to ET_DYN (3) so it's acceptable as a shared object */
+    WRITE16(&buf[16], 3);
+
+    /* set e_shoff to immediately after the ELF header */
+    if(ei_class == 2) {
+        WRITE64(&buf[e_shoff_off], (uint64_t)ehsize);
+    } else {
+        WRITE32(&buf[e_shoff_off], (uint32_t)ehsize);
+    }
+
+    /* set sizes/counts */
+    WRITE16(&buf[e_ehsize_off], ehsize);
+    WRITE16(&buf[e_shentsize_off], shentsize);
+    WRITE16(&buf[e_shnum_off], 1);
+    WRITE16(&buf[e_shstrndx_off], 0);
+
+    /* prepare section header */
+    unsigned char sh[96];
+    memset(sh, 0, sizeof(sh));
+    /* sh_type = SHT_SYMTAB (3) */
+    WRITE32(&sh[4], 3);
+
+    /* write file */
+    FILE *f = fopen(outname, "wb");
+    if(!f) {
+        log(LDPL_INFO, "Glink plugin: failed to create %s\n", outname);
+        return;
+    }
+    /* write ELF header */
+    if(fwrite(buf, 1, ehsize, f) != ehsize) {
+        fclose(f);
+        return;
+    }
+    /* write single section header */
+    if(fwrite(sh, 1, shentsize, f) != shentsize) {
+        fclose(f);
+        return;
+    }
+    fclose(f);
+#undef WRITE16
+#undef WRITE32
+#undef WRITE64
+    }
+}
+
+
 static enum ld_plugin_status onall_symbols_read() {
     if(!handle) {
         log(LDPL_FATAL, "Glink plugin: found no ghidra database to claim\n");
@@ -147,10 +270,12 @@ static enum ld_plugin_status onall_symbols_read() {
         log(LDPL_FATAL, "Glink plugin: failed to add linker script %s\n", fname);
         return LDPS_ERR;
     }
+
     // this is a workaround for a bug in ld;
     // adding only a linker script causes a hang
     // see https://sourceware.org/bugzilla/show_bug.cgi?id=33764
-    v = add_input_file("empty.so");
+    generate_minimal_object_file();
+    v = add_input_file(empty_fname);
     if(v != LDPS_OK){
         log(LDPL_FATAL, "Glink plugin: failed to add empty shared library to workaround ld bug\n");
         return LDPS_ERR;

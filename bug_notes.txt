@@ -1,0 +1,57 @@
+at line 8403, files is file_chain, meaning we try to insert it into itself (and corrupt everything horribly)
+
+for this to happen, at least one other library must be linked against.
+
+LD Bug:
+Using a plugin to inject a script with symbol definitions fails only if also linking against an archive if and only if that archive occurs in the link chain after the replaced file, even if that library is unreferenced
+
+source:
+LD plugins allow you to inject additional input files after all files are read. As far as I can tell, this is pretty much only used for Link Time Optimization (LTO).
+
+When trying to write my own plugin, I noticed that using that capability to inject a linker script caused ld to hang.
+Some debugging narrowed the cause down to the function lang_process in ldlang.c
+
+#background
+## on ld's internal datastructures
+LD internally stores three linked lists containing the files to be used in the linking process; stat_ptr, file_chain, and input_file_chain.
+
+when a plugin injects a file, it is placed goes at the end of the stat_ptr and file_chain lists by the following call sequence:
+add_input_file -> lang_add_input_file -> new_afile
+
+The injected file is placed at the end of the file_chain list by a later call to 
+lang_process -> open_input_bfds -> load_symbols -> ldlang_add_file
+if the injected file is an object (not if it's an ld script)
+
+## on plugins
+Plugins are required to 'capture' some input file (normally, the file still containing IR that's going to go through LTO).
+The injected files essentially replace the captured files during the linking process.
+
+In order to preserve the correct link order though, those injected files should be in the location of the captured file.
+
+Among other things, Lang_process is responsible for restoring that correct order.
+Lang_process calls lang_list_remove_tail to move new data out of each of file_chain, stat_ptr, and input_file_chain and into a temporary variable.
+It then finds the appropriate location in the respective chains and calls lang_list_insert_after to move the injected files to the correct location.
+
+# The bug
+As I said earlier, if the injected file is an ld script it is not added to the file_chain linked list. Lang_process does not anticipate this (since presumably all normally injected files are object files).
+As such, it tries to move 0 entries from the end of file_chain into the middle of file_chain. That would be fine, but except for a bug in lang_list_remove_tail.
+
+lang_list_remove_tail does not properly handle the case destlist == origlist;
+origlist->head is correctly set to NULL, but origlist->tail remains pointing at the tail of the original list.
+It should point at origlist->head (since the list is empty).
+
+This causes the subsequent call to lang_list_insert_after to create a cycle in the linked list, which was the cause of the hang I observed.
+
+# fix
+@@ -8121,6 +8120,9 @@ lang_list_remove_tail (lang_statement_list_type *destlist,
+   savetail = origlist->tail;
+   origlist->head = *(savetail);
+   origlist->tail = destlist->tail;
++  if(origlist->head == NULL){
++    origlist->tail = &origlist->head;
++  }
+   destlist->tail = savetail;
+   *savetail = NULL;
+ }
+
+
