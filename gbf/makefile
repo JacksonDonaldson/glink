@@ -1,9 +1,13 @@
-libgbf.a: src/gbf.c src/localbufferfile.c
-	gcc -fPIC -c src/gbf.c src/localbufferfile.c src/common.c -Iinclude -Iexport
-	ar rcs libgbf.a gbf.o localbufferfile.o common.o
+libgbf.a: src/GBF.cpp src/LocalBufferFile.cpp src/common.cpp src/GBFTable.cpp src/GBFRecord.cpp src/GBFUtils.cpp
+	g++ -fPIC -c src/GBF.cpp src/LocalBufferFile.cpp src/common.cpp src/GBFTable.cpp src/GBFRecord.cpp src/GBFUtils.cpp -Iinclude -Iexport
+	ar rcs libgbf.a GBF.o LocalBufferFile.o common.o GBFTable.o GBFRecord.o GBFUtils.o
 
-example: example/main.c libgbf.a
-	gcc -o example/example example/main.c -Iexport -L. -lgbf -static
-
+example: example/main.cpp libgbf.a
+	g++ -o example/example example/main.cpp -Iinclude -Iexport -L. -lgbf -static
+	
+run_example: example .FORCE
+	./example/example /home/user/glink/example/ghidra_repo/target_project.rep@target
 clean:
-	rm -f libgbf.so example/example gbf.o localbufferfile.o common.o libgbf.a
+	rm -f libgbf.so example/example GBF.o LocalBufferFile.o common.o GBFTable.o GBFRecord.o GBFUtils.o libgbf.a
+
+.FORCE:

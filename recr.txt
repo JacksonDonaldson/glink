@@ -1,0 +1,32 @@
+glink: plugin that handles the stuff recr needs done by ld
+
+input: .reo files, ghidra repositories
+output: unclear
+
+what composes a .reo file?
+
+what needs to be touched by ld?
+
+ - link a branch from each hook location 
+ - link a branch to each hook location
+ - link each .reo file against ghidra symbols
+
+Then eventually everything needs to end up being underflowed and appended to the target file
+
+Assume the input .text segment:
+ - starts with all the replacement sections 
+  - each of those segments contains:
+    - a label at the start that matches a gfunc 'foo'
+    - a branch to __glink_'foo'
+    - these mostly work the same as later links, we just introduce foo as __glink_foo
+ - then has all the injected code, which gets linked like normal (but with g syms available)
+ - what about branches from hooks?
+  - reo files contain (somehow) a list of functions to get hooked
+   - that's just the __glink_ labels above
+  - for each of those labels, create a branch instruction and add it to the output somehow
+
+then we have a post-processor that reads the generated file and mashes it together with the target.
+
+the call to ld (with glink plugged in), then, should:
+ - determine where to start the linker
+ - 
