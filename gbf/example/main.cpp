@@ -10,12 +10,12 @@
 /*
 1. Parse stdin, get path to ghidra repo, name of program
 2. parse ~index.dat:
-    - find the appropriate .gbf database file
+    - find the appropriate .gbf symbolsbase file
 3. parse .gbf file
     - find location of master table
     - find location of symbol table
-    - find location of function data table
-    - for each symbol in the symbol table, if it's a function match it w/ function data table and print appropriate data
+    - find location of function symbols table
+    - for each symbol in the symbol table, if it's a function match it w/ function symbols table and print appropriate symbols
 */
 #define MAX_PATH 256
 
@@ -38,7 +38,7 @@ int main(int argc, char ** argv) {
 
     char gbf_file_path[MAX_PATH];
 
-    // Parse ~index.dat to find the appropriate .gbf database file
+    // Parse ~index.dat to find the appropriate .gbf symbolsbase file
     std::printf("Ghidra path: %s\n", ghidra_path);
     std::printf("Program name: %s\n", program_name);
     uint res = get_gbf_file(ghidra_path, program_name, gbf_file_path, sizeof(gbf_file_path));
@@ -49,32 +49,25 @@ int main(int argc, char ** argv) {
     std::printf("open_gbf: %u\n", res);
 
     
+    GBFTable thunk_functions;
+    ErrorCode err = thunk_functions.getTable(&gbuf, "Thunk Functions");
+    std::printf("get_gbftable: %d\n", err);
+
+    thunk_functions.print();
+
     GBFTable function_data;
-    ErrorCode err = function_data.getTable(&gbuf, "Thunk Functions");
-    std::printf("get_gbftable: %d\n", res);
-
-    function_data.print();
-
-    auto entry = function_data.getFirstRecord();
-    if (!entry) {
-        std::printf("No records or not VariableGBFRecord in Function Data\n");
-        exit(1);
-    }
-
-    do{
-        entry->print();
-    }while (entry->next() == ErrorCode::E_OK);
-    //     entry.print();
-    // } while(!entry.next());
-
-    GBFTable data;
+    err = function_data.getTable(&gbuf, "Function Data");
+    std::printf("get_gbftable: %d\n", err);
     
-    data.getTable(&gbuf, "Symbols");
 
-    data.print();
+    GBFTable symbols;
+    
+    symbols.getTable(&gbuf, "Symbols");
+
+    symbols.print();
 
 
-    auto entry2 = data.getFirstRecord();
+    auto entry2 = symbols.getFirstRecord();
     if (!entry2) {
         std::printf("No records in Symbols\n");
         exit(1);
@@ -84,10 +77,23 @@ int main(int argc, char ** argv) {
         byte sym_type;
         entry2->getField("Symbol Type", &sym_type, sizeof(sym_type));
         if(sym_type == 5){
-            entry2->print();
-            auto function_entry = function_data.getRecordById(entry2->getId());
+            
+            auto function_entry = thunk_functions.getRecordById(entry2->getId());
             if(function_entry){
+                entry2->print();
                 function_entry->print();
+                ulonglong func_id;
+                function_entry->getField("Linked Function ID", &func_id, sizeof(func_id));
+
+                auto other_symbol = symbols.getRecordById(func_id);
+                if(other_symbol){
+                    other_symbol->print();
+                }
+                // auto function_data_entry = function_data.getRecordById(func_id);
+                // function_data_entry->print();
+
+                
+
             }
             std::printf("\n\n\n");
         }
