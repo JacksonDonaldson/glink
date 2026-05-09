@@ -1,5 +1,7 @@
 #include "GBFTable.hpp"
 #include "GBF.hpp"
+#include "VariableGBFRecord.hpp"
+#include "FixedGBFRecord.hpp"
 #include "common.hpp"
 #include <iostream>
 #include <cstring>
@@ -20,6 +22,9 @@ ErrorCode GBFTable::getTable(GBF* gbuf, const char* table_name) {
         if (ind_flag == 0) {
             byte* record = master_table.get() + rec_offset;
             uint table_name_len = readint(record, 0);
+
+            // std::cout << "Checking table: " << std::string((char*)record + 4, table_name_len) << "at" <<  std::hex << rec_offset << std::endl;
+
             if (table_name_len != target_len) continue;
             if (std::memcmp(record + 4, table_name, table_name_len) != 0) continue;
             // found
@@ -67,6 +72,19 @@ ErrorCode GBFTable::getTable(GBF* gbuf, const char* table_name) {
             index_column_ = readint(record, 0);
             max_key_ = readlong(record, 4);
             record_count_ = readint(record, 12);
+            // Calculate record size
+            record_size_ = 0;
+            for (byte type : schema_field_types_) {
+                switch (type) {
+                    case 0x00: record_size_ += 1; break; // BYTE
+                    case 0x01: record_size_ += 2; break; // SHORT
+                    case 0x02: record_size_ += 4; break; // INT
+                    case 0x03: record_size_ += 8; break; // LONG
+                    case 0x06: record_size_ += 1; break; // BOOLEAN
+                    case 0x07: record_size_ += 10; break; // FIXED_10_TYPE
+                    default: record_size_ += 0; // unknown, assume 0
+                }
+            }
             return ErrorCode::E_OK;
         }
     }
@@ -93,4 +111,40 @@ void GBFTable::print() const {
     std::cout << "  index column: " << index_column_ << "\n";
     std::cout << "  max key: " << max_key_ << "\n";
     std::cout << "  record count: " << record_count_ << "\n";
+}
+
+std::unique_ptr<GBFRecord> GBFTable::getFirstRecord() {
+    if (record_count_ == 0) return nullptr;
+    auto buffer = lbf_->getBuffer(root_buffer_id_ + 1);
+    if (buffer[0] == 0x01) {
+        return std::make_unique<VariableGBFRecord>(this, 0);
+    } else if (buffer[0] == 0x02) {
+        return std::make_unique<FixedGBFRecord>(this, 0);
+    } else {
+        return nullptr; // unsupported node type
+    }
+}
+
+std::unique_ptr<GBFRecord> GBFTable::getRecordById(unsigned long long id) {
+    if (record_count_ == 0) return nullptr;
+    auto buffer = lbf_->getBuffer(root_buffer_id_ + 1);
+    if (buffer[0] == 0x01) {
+        for (uint current_record = 0; current_record < record_count_; ++current_record) {
+            unsigned long long current_id = readlong(buffer.get(), 13 + current_record * 13);
+            if (current_id == id) {
+                return std::make_unique<VariableGBFRecord>(this, current_record);
+            }
+        }
+    } else if (buffer[0] == 0x02) {
+        uint rec_size = record_size_;
+        for (uint current_record = 0; current_record < record_count_; ++current_record) {
+            unsigned long long current_id = readlong(buffer.get(), 13 + current_record * (8 + rec_size));
+            if (current_id == id) {
+                return std::make_unique<FixedGBFRecord>(this, current_record);
+            }
+        }
+    } else {
+        return nullptr; // unsupported
+    }
+    return nullptr; // not found
 }

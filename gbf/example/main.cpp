@@ -50,37 +50,48 @@ int main(int argc, char ** argv) {
 
     
     GBFTable function_data;
-    GBFRecord function_entry;
-    function_data.getTable(&gbuf, "Function Data");
+    ErrorCode err = function_data.getTable(&gbuf, "Thunk Functions");
+    std::printf("get_gbftable: %d\n", res);
 
     function_data.print();
 
-    
-    // get_iterator(&data, &entry);
+    auto entry = function_data.getFirstRecord();
+    if (!entry) {
+        std::printf("No records or not VariableGBFRecord in Function Data\n");
+        exit(1);
+    }
 
-    // do{
+    do{
+        entry->print();
+    }while (entry->next() == ErrorCode::E_OK);
     //     entry.print();
     // } while(!entry.next());
 
     GBFTable data;
-    GBFRecord entry;
+    
     data.getTable(&gbuf, "Symbols");
 
     data.print();
 
 
-    entry.openFirst(&data);
+    auto entry2 = data.getFirstRecord();
+    if (!entry2) {
+        std::printf("No records in Symbols\n");
+        exit(1);
+    }
 
     do{
         byte sym_type;
-        entry.getField("Symbol Type", &sym_type, sizeof(sym_type));
+        entry2->getField("Symbol Type", &sym_type, sizeof(sym_type));
         if(sym_type == 5){
-            entry.print();
-            function_entry.openById(&function_data, entry.getId());
-            function_entry.print();
+            entry2->print();
+            auto function_entry = function_data.getRecordById(entry2->getId());
+            if(function_entry){
+                function_entry->print();
+            }
             std::printf("\n\n\n");
         }
-    }while (entry.next() == ErrorCode::E_OK);
+    }while (entry2->next() == ErrorCode::E_OK);
 
     // close_gbf(&gbuf);
     

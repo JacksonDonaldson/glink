@@ -1,48 +1,40 @@
-#include "GBFRecord.hpp"
+#include "FixedGBFRecord.hpp"
+#include "GBFTable.hpp"
 #include "common.hpp"
 #include <iostream>
 #include <cstring>
 #include <string>
 
-ErrorCode GBFRecord::openFirst(GBFTable* table) {
-    table_data_ = table;
-    if (table->getRecordCount() == 0) return ErrorCode::E_NO_RECORDS;
-    current_record_ = static_cast<uint>(-1);
-    buffer_ = table->getLBF()->getBuffer(table->getRootBufferId() + 1);
-    if (buffer_[0] != 0x01) return ErrorCode::E_INVALID_NODE_TYPE;
-    if (readint(buffer_.get(), 1) != table->getRecordCount()) return ErrorCode::E_RECORD_COUNT_MISMATCH;
-    return next();
+FixedGBFRecord::FixedGBFRecord(GBFTable* table, uint record_index) : table_data_(table), current_record_(record_index), valid_(true) {
+    if (record_index >= table->getRecordCount()) {
+        valid_ = false;
+        return;
+    }
+    buffer_owner_ = table->getLBF()->getBuffer(table->getRootBufferId() + 1);
+    buffer_ = buffer_owner_.get();
+    // For fixed: header 13 bytes, then Key(8) + Rec(rec_size) per record
+    uint rec_size = table->getRecordSize();
+    id_ = readlong(buffer_, 13 + current_record_ * (8 + rec_size));
 }
 
-ErrorCode GBFRecord::next() {
+ErrorCode FixedGBFRecord::next() {
+    if (!valid_) return ErrorCode::E_INVALID;
     ++current_record_;
     if (current_record_ >= table_data_->getRecordCount()) return ErrorCode::E_NO_MORE_RECORDS;
-    id_ = readlong(buffer_.get(), 13 + current_record_ * 13);
+    uint rec_size = table_data_->getRecordSize();
+    id_ = readlong(buffer_, 13 + current_record_ * (8 + rec_size));
     return ErrorCode::E_OK;
 }
 
-ErrorCode GBFRecord::openById(GBFTable* table, unsigned long long id) {
-    table_data_ = table;
-    if (table->getRecordCount() == 0) return ErrorCode::E_NO_RECORDS;
-    buffer_ = table->getLBF()->getBuffer(table->getRootBufferId() + 1);
-    if (buffer_[0] != 0x01) return ErrorCode::E_INVALID_NODE_TYPE;
-    if (readint(buffer_.get(), 1) != table->getRecordCount()) return ErrorCode::E_RECORD_COUNT_MISMATCH;
-    for (current_record_ = 0; current_record_ < table->getRecordCount(); ++current_record_) {
-        unsigned long long current_id = readlong(buffer_.get(), 13 + current_record_ * 13);
-        if (current_id == id) {
-            id_ = current_id;
-            return ErrorCode::E_OK;
-        }
-    }
-    return ErrorCode::E_RECORD_NOT_FOUND;
+byte* FixedGBFRecord::getRecordBuffer() {
+    if (!valid_) return nullptr;
+    uint rec_size = table_data_->getRecordSize();
+    uint offset = 13 + current_record_ * (8 + rec_size) + 8; // after Key
+    return const_cast<byte*>(buffer_) + offset;
 }
 
-byte* GBFRecord::getRecordBuffer() {
-    uint record_offset = readint(buffer_.get(), 21 + current_record_ * 13);
-    return buffer_.get() + record_offset;
-}
-
-ErrorCode GBFRecord::getField(const char* target_name, void* out, uint out_len) {
+ErrorCode FixedGBFRecord::getField(const char* target_name, void* out, uint out_len) {
+    if (!valid_) return ErrorCode::E_INVALID;
     std::string field_names = table_data_->getSchemaFieldNames();
     uint target_name_len = std::strlen(target_name);
     byte* record_buffer = getRecordBuffer();
@@ -91,7 +83,7 @@ ErrorCode GBFRecord::getField(const char* target_name, void* out, uint out_len) 
     return ErrorCode::E_FIELD_NOT_FOUND;
 }
 
-ErrorCode GBFRecord::handleField(byte field_type, byte** record_buffer_ptr, void* out, uint out_len, bool want_output) {
+ErrorCode FixedGBFRecord::handleField(byte field_type, byte** record_buffer_ptr, void* out, uint out_len, bool want_output) {
     byte* record_buffer = *record_buffer_ptr;
     switch (field_type) {
         case 0x00: // BYTE
@@ -165,7 +157,11 @@ ErrorCode GBFRecord::handleField(byte field_type, byte** record_buffer_ptr, void
     return ErrorCode::E_OK;
 }
 
-void GBFRecord::print() {
+void FixedGBFRecord::print() {
+    if (!valid_) {
+        std::cout << "gbfrecord: invalid\n";
+        return;
+    }
     std::cout << "gbfrecord:\n";
     std::string field_names = table_data_->getSchemaFieldNames();
     size_t start = field_names.find(';');
@@ -224,7 +220,6 @@ void GBFRecord::print() {
                 } 
                 // else {
                 //     std::cout << "[error reading field]";
-
                 // }
             }
             std::cout << "\n";
