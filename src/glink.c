@@ -23,9 +23,7 @@ ulonglong * sym_addrs;
 unsigned int sym_count = 0;
 static char option[MAX_PATH];
 
-
 static char saved_elf_file[0x80]; 
-
 
 const char* fname = "glink.ld";
 const char* empty_fname = "empty.o";
@@ -41,10 +39,31 @@ static uint read_symbols_from_ghidra_db(const char* gbf_path) {
 
     gbftable symtab;
     res = get_gbftable(&gbuf, "Symbols", &symtab);
+    fprintf(stderr, "get_gbftable Function Definitions: %u\n", res);
     if(res){
         log(LDPL_FATAL, "Glink plugin: failed to get symbol table from ghidra gbf database: %s %u\n", gbf_path, res);
         return -1;
     }
+
+    gbftable functab;
+    res = get_gbftable(&gbuf, "Thunk Functions", &functab);
+    fprintf(stderr, "get_gbftable Relocations: %u\n", res);
+    if(res){
+        log(LDPL_FATAL, "Glink plugin: failed to get function table from ghidra gbf database: %s %u\n", gbf_path, res);
+        return -1;
+    }
+
+    print_gbftable(&functab);
+    gbfrecord func_record;
+    res = open_first_record(&functab, &func_record);
+    if(res){
+        log(LDPL_FATAL, "Glink plugin: failed to open first record of function table from ghidra gbf database: %s %u\n", gbf_path, res);  
+        return -1;
+    }
+    do{
+        print_record(&func_record);
+    } while(!next_record(&func_record));
+    
 
     gbfrecord sym_record;
     res = open_first_record(&symtab, &sym_record);
@@ -67,17 +86,21 @@ static uint read_symbols_from_ghidra_db(const char* gbf_path) {
         }
 
         if(sym_type == 5){ //function symbol
+            print_record(&sym_record);
+
             char sym_name[256] = {0};
             res = get_record_field(&sym_record, "Name", sym_name, sizeof(sym_name));
             if(res){
                 log(LDPL_FATAL, "Glink plugin: failed to get symbol name field of symbol record from ghidra gbf database: %s %u\n", gbf_path, res);
                 return -1;
             }
-            
+
+            ulonglong addr = 0;
+            res = get_record_field(&sym_record, "Address", &addr, sizeof(addr));            
             if(sym_name[0] == '\0' || strcmp(sym_name, "(null)") == 0){
                 continue;
             }
-            fprintf(stderr, "Glink plugin: found function symbol: %s\n", sym_name);
+            
             symbols[sym_count].name = strdup(sym_name);
             symbols[sym_count].version = NULL;
             symbols[sym_count].def = LDPK_DEF;
@@ -88,8 +111,8 @@ static uint read_symbols_from_ghidra_db(const char* gbf_path) {
             symbols[sym_count].comdat_key = NULL;
             symbols[sym_count].resolution = LDPR_PREVAILING_DEF; //regular
 
-            ulonglong addr = 0;
-            res = get_record_field(&sym_record, "Address", &addr, sizeof(addr));
+            
+            fprintf(stderr, "Glink plugin: found function symbol: %s at %16llx\n", sym_name, addr);
             if(res){
                 log(LDPL_FATAL, "Glink plugin: failed to get symbol address field of symbol record from ghidra gbf database: %s %u\n", gbf_path, res);
                 return -1;
@@ -160,7 +183,6 @@ static enum ld_plugin_status onclaim_file(const struct ld_plugin_input_file *fil
 }
 
 static void generate_minimal_object_file() {
-    const char *outname = "empty.so";
     unsigned char *buf = (unsigned char*)saved_elf_file;
     /* verify ELF magic */
     if(!((unsigned char)buf[0] == 0x7f && buf[1] == 'E' && buf[2] == 'L' && buf[3] == 'F')){
@@ -224,9 +246,9 @@ static void generate_minimal_object_file() {
     WRITE32(&sh[4], 3);
 
     /* write file */
-    FILE *f = fopen(outname, "wb");
+    FILE *f = fopen(empty_fname, "wb");
     if(!f) {
-        log(LDPL_INFO, "Glink plugin: failed to create %s\n", outname);
+        log(LDPL_INFO, "Glink plugin: failed to create %s\n", empty_fname);
         return;
     }
     /* write ELF header */

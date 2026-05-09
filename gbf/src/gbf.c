@@ -154,7 +154,7 @@ uint get_gbftable(gbf* gbuf, char* table_name, gbftable * data) {
             //the record has been stored within a chained DBBuffer at rec_offset
             byte* record = master_table + rec_offset;
             uint table_name_len = readint(record, 0);
-            // printf("processing table %.*s at %08x\n", table_name_len, record + 4, rec_offset);
+            printf("processing table %.*s at %08x\n", table_name_len, record + 4, rec_offset);
             if(table_name_len != target_len){
                 continue;
             }
@@ -172,7 +172,9 @@ uint get_gbftable(gbf* gbuf, char* table_name, gbftable * data) {
             // printf("Found table: %s at %08x\n", table_name, rec_offset);
             data->schema_version = readint(record, 0);
             data->root_buffer_id = readint(record, 4);
+            
             data->key_type = record[8];
+            
             data->schema_field_types_len = readint(record, 9);
             uint original_field_types_len = data->schema_field_types_len ;
             if (data->schema_field_types_len > 0) {
@@ -222,9 +224,15 @@ uint get_gbftable(gbf* gbuf, char* table_name, gbftable * data) {
 }
 
 uint open_first_record(gbftable *data, gbfrecord *record) {
+    if(data->record_count == 0){
+        return E_NO_RECORDS;
+    }
+
     record->table_data = data;
     record->current_record = -1;
     record->buffer = get_buffer(record->table_data->lbf, record->table_data->root_buffer_id + 1);
+
+    // see NodeMgr
     if(record->buffer[0] != 0x01){
         return E_INVALID_NODE_TYPE;
     }
@@ -251,6 +259,10 @@ uint next_record(gbfrecord *record) {
 }
 
 uint open_record_by_id(gbftable* data, gbfrecord *record, unsigned long long id) {
+    if(data->record_count == 0){
+        return E_NO_RECORDS;
+    }
+
     record->table_data = data;
     record->buffer = get_buffer(record->table_data->lbf, record->table_data->root_buffer_id + 1);
     if(record->buffer[0] != 0x01){

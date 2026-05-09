@@ -40,7 +40,8 @@ uint get_buflen(localbufferfile * lbf){
 
 byte* get_buffer(localbufferfile * lbf, uint buf_num){
     uint offset = buf_num * (lbf->buf_len + BUFFER_PREFIX_SIZE) + BUFFER_PREFIX_SIZE;
-    
+    fprintf(stderr, "get_buffer: buf_num %u offset %08llx\n", buf_num, offset);
+
     fseek(lbf->file, offset, SEEK_SET);
     byte* buffer = malloc(lbf->buf_len);
     fread(buffer, lbf->buf_len, 1, lbf->file);

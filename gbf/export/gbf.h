@@ -30,6 +30,7 @@ typedef unsigned int uint;
 #define E_UNSUPPORTED_VERSION 21
 #define E_UNREASONABLE_BUFFER_LENGTH 22
 #define E_NO_INDEX 23
+#define E_NO_RECORDS 24
 
 #define MAX_PATH 256
 
