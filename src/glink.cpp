@@ -6,6 +6,7 @@
 #include <string>
 
 #include "plugin-api.h"
+#include "ghidra-defs.h"
 #include "GBF.hpp"
 #include "GBFTable.hpp"
 #include "GBFRecord.hpp"
@@ -71,7 +72,47 @@ static int get_unthunked_function_name(GBFTable* symbol_table, GBFTable* thunk_f
     return 0;
 }
 
+int read_address_map(GBF * gbuf){
+    GBFTable address_map;
+    ErrorCode res = address_map.getTable(gbuf, "ADDRESS MAP");
+    if(res != ErrorCode::E_OK){
+        log_message(LDPL_FATAL, "Glink plugin: failed to read ADDRESS MAP");
+        return 1;
+    }
 
+    auto address_map_record = address_map.getFirstRecord();
+    if(!address_map_record){
+        log_message(LDPL_FATAL, "Glink plugin: failed to get record from ADDRESS MAP");
+    }
+    do{
+        address_map_record->print();
+    } while(address_map_record->next() == ErrorCode::E_OK);
+    exit(0);
+}
+
+
+int fix_up_address(ulonglong *addr, ADDRESS_TYPE* address_type){
+    byte addr_high_nibble = (*addr >> 0x3c);
+    *addr &= ~((ulonglong)0xf << 0x3c);
+
+    switch(addr_high_nibble){
+        case 2:
+            //relocatable
+            *addr += 0;
+            *address_type = address_type_relocatable;
+            break;
+        case 5:
+            //external
+            *address_type = address_type_external;
+            break;
+
+        default:
+            //unk
+            return 1;
+    }
+    
+    return 0;
+}
 static int read_symbols_from_ghidra_db(const char* gbf_path) {
     GBF gbuf;
     ErrorCode res = gbuf.open(gbf_path);
@@ -80,6 +121,7 @@ static int read_symbols_from_ghidra_db(const char* gbf_path) {
         return -1;
     }
 
+    read_address_map(&gbuf);
     GBFTable symtab;
     res = symtab.getTable(&gbuf, "Symbols");
     if (res != ErrorCode::E_OK) {

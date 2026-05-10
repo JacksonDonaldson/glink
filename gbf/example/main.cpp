@@ -19,6 +19,25 @@
 */
 #define MAX_PATH 256
 
+void print_table_and_contents(GBF* gbuf, char* table_name){
+    GBFTable tab;
+    ErrorCode err = tab.getTable(gbuf, table_name);
+    std::printf("get_gbftable: %d\n", err);
+    if(err != ErrorCode::E_OK){
+        exit(1);
+    }
+    tab.print();
+
+    auto record = tab.getFirstRecord();
+    if (!record){
+        std::printf("bad first record");
+        exit(1);
+    }
+    do{
+        record->print();
+    }while(record->next() == ErrorCode::E_OK);
+}
+
 int main(int argc, char ** argv) {
 
     char* ghidra_path, *program_name;
@@ -48,11 +67,15 @@ int main(int argc, char ** argv) {
     res = static_cast<uint>(gbuf.open(gbf_file_path));
     std::printf("open_gbf: %u\n", res);
 
-    
-    GBFTable thunk_functions;
-    ErrorCode err = thunk_functions.getTable(&gbuf, "Thunk Functions");
-    std::printf("get_gbftable: %d\n", err);
+    // print_table_and_contents(&gbuf, "Program");
+    print_table_and_contents(&gbuf, "Program");
+    print_table_and_contents(&gbuf, "Sub Memory Blocks");
+    exit(0);
 
+    GBFTable thunk_functions;
+    ErrorCode err = thunk_functions.getTable(&gbuf, "Thunka Functions");
+    std::printf("get_gbftable: %d\n", err);
+    
     thunk_functions.print();
 
     GBFTable function_data;
