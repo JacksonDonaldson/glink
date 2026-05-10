@@ -1,8 +1,8 @@
 CC := gcc
 
 
-glink: src/glink.c libgbf.a
-	gcc -o glink src/glink.c -Igbf/export -Iinclude -Wall -Werror -g -shared -fPIC -Lgbf -lgbf
+glink: src/glink.cpp libgbf.a
+	/usr/bin/g++ -o glink src/glink.cpp -Igbf/include -Iinclude -Wall -Werror -g -shared -fPIC -Lgbf -lgbf
 
 libgbf.a:
 	$(MAKE) -C gbf libgbf.a

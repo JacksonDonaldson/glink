@@ -1,5 +1,5 @@
 libgbf.a: src/GBF.cpp src/LocalBufferFile.cpp src/common.cpp src/GBFTable.cpp src/VariableGBFRecord.cpp src/FixedGBFRecord.cpp src/GBFUtils.cpp
-	g++ -fPIC -c src/GBF.cpp src/LocalBufferFile.cpp src/common.cpp src/GBFTable.cpp src/VariableGBFRecord.cpp src/FixedGBFRecord.cpp src/GBFUtils.cpp -Iinclude -Iexport
+	/usr/bin/g++ -fPIC -c src/GBF.cpp src/LocalBufferFile.cpp src/common.cpp src/GBFTable.cpp src/VariableGBFRecord.cpp src/FixedGBFRecord.cpp src/GBFUtils.cpp -Iinclude -Iexport
 	ar rcs libgbf.a GBF.o LocalBufferFile.o common.o GBFTable.o VariableGBFRecord.o FixedGBFRecord.o GBFUtils.o
 
 example: example/main.cpp libgbf.a
