@@ -1,6 +1,7 @@
 #include "GBFTable.hpp"
 #include "GBF.hpp"
 #include "VariableGBFRecord.hpp"
+#include "VariableKeyRecordGBFRecord.hpp"
 #include "FixedGBFRecord.hpp"
 #include "common.hpp"
 #include <iostream>
@@ -120,6 +121,8 @@ std::unique_ptr<GBFRecord> GBFTable::getFirstRecord() {
         return std::make_unique<VariableGBFRecord>(this, 0);
     } else if (buffer[0] == 0x02) {
         return std::make_unique<FixedGBFRecord>(this, 0);
+    } else if (buffer[0] == 0x04) {
+        return std::make_unique<VariableKeyRecordGBFRecord>(this, 0);
     } else {
         return nullptr; // unsupported node type
     }
@@ -141,6 +144,13 @@ std::unique_ptr<GBFRecord> GBFTable::getRecordById(unsigned long long id) {
             unsigned long long current_id = readlong(buffer.get(), 13 + current_record * (8 + rec_size));
             if (current_id == id) {
                 return std::make_unique<FixedGBFRecord>(this, current_record);
+            }
+        }
+    } else if (buffer[0] == 0x04) {
+        for (uint current_record = 0; current_record < record_count_; ++current_record) {
+            auto rec = std::make_unique<VariableKeyRecordGBFRecord>(this, current_record);
+            if (rec->getId() == id) {
+                return rec;
             }
         }
     } else {
