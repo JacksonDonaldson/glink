@@ -117,6 +117,10 @@ ErrorCode VariableKeyRecordGBFRecord::getField(const char* target_name, void* ou
     uint sparse_offset = field_types.size() - table_data_->getSparseFieldsLen();
 
     uint record_count = field_types.size();
+
+    //skip the first field since it stores the key
+    handleField(key_type_, &record_buffer, out, out_len, false);
+    
     for (uint i = 0; i < record_count; ++i) {
         byte field_type = field_types[i];
         byte field_index = i;
