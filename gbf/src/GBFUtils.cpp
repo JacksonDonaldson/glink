@@ -26,8 +26,8 @@ uint get_gbf_file(const char *ghidra_repo_path, char *program_name, char* gbf_fi
         return static_cast<uint>(ErrorCode::E_NOT_GHIDRA_REPO);
     }
 
-    char index_dat_path[MAX_PATH];
-    ::snprintf(index_dat_path, sizeof(index_dat_path), "%s/idata/~index.dat", internal_ghidra_path);
+    char index_dat_path[MAX_PATH * 2];
+    std::snprintf(index_dat_path, sizeof(index_dat_path), "%s/idata/~index.dat", internal_ghidra_path);
 
     FILE *index_dat_file = ::fopen(index_dat_path, "r");
     if (!index_dat_file) {
@@ -35,7 +35,7 @@ uint get_gbf_file(const char *ghidra_repo_path, char *program_name, char* gbf_fi
     }
 
     char* match = nullptr;
-    char index_data[MAX_PATH];
+    char index_data[MAX_PATH * 2];
     while (::fgets(index_data, sizeof(index_data), index_dat_file)) {
         if ((match = ::strstr(index_data, program_name))) {
             break;
@@ -52,8 +52,8 @@ uint get_gbf_file(const char *ghidra_repo_path, char *program_name, char* gbf_fi
 
     *(match-1) = '\0';
 
-    char gbf_folder_path[MAX_PATH];
-    ::snprintf(gbf_folder_path, sizeof(gbf_folder_path), "%s/idata/%c%c/~%s.db/", internal_ghidra_path, folder_0, folder_1, match - 9);
+    char gbf_folder_path[MAX_PATH * 2];
+    std::snprintf(gbf_folder_path, sizeof(gbf_folder_path), "%s/idata/%c%c/~%s.db/", internal_ghidra_path, folder_0, folder_1, match - 9);
 
     DIR *dir = opendir(gbf_folder_path);
     if (!dir) {
@@ -62,7 +62,7 @@ uint get_gbf_file(const char *ghidra_repo_path, char *program_name, char* gbf_fi
 
     struct dirent *entry;
     struct stat st;
-    char candidate_path[MAX_PATH * 2];
+    char candidate_path[MAX_PATH * 4];
     time_t newest_mtime = 0;
     int found = 0;
 

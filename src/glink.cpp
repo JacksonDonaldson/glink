@@ -72,22 +72,40 @@ static int get_unthunked_function_name(GBFTable* symbol_table, GBFTable* thunk_f
     return 0;
 }
 
-int read_address_map(GBF * gbuf){
-    GBFTable address_map;
-    ErrorCode res = address_map.getTable(gbuf, "ADDRESS MAP");
+ulonglong base_addr = 0;
+int get_base_address(GBF * gbuf){
+    GBFTable program;
+    ErrorCode res = program.getTable(gbuf, "Program");
     if(res != ErrorCode::E_OK){
-        log_message(LDPL_FATAL, "Glink plugin: failed to read ADDRESS MAP");
+        log_message(LDPL_FATAL, "Glink plugin: failed to read Program table");
         return 1;
     }
 
-    auto address_map_record = address_map.getFirstRecord();
-    if(!address_map_record){
-        log_message(LDPL_FATAL, "Glink plugin: failed to get record from ADDRESS MAP");
+    auto program_record = program.getFirstRecord();
+    if(!program_record){
+        log_message(LDPL_FATAL, "Glink plugin: failed to get record from Program table");
+        return 2;
     }
     do{
-        address_map_record->print();
-    } while(address_map_record->next() == ErrorCode::E_OK);
-    exit(0);
+        char key[256] = {0};
+        res = program_record->getField("Key", key, sizeof(key));
+        if(res != ErrorCode::E_OK){
+            continue;
+        }
+        if(strcmp(key, "Image Offset") == 0){
+            char value[256] = {0};
+            res = program_record->getField("Value", value, sizeof(value));
+            if(res != ErrorCode::E_OK){
+                log_message(LDPL_FATAL, "Glink plugin: failed to get Base Address value from Program table");
+                return 3;
+            }
+            base_addr = std::strtoull(value, nullptr, 16);
+            // fprintf(stderr, "Base Address: %08llx\n", base_addr);
+            return 0;
+        }
+    } while(program_record->next() == ErrorCode::E_OK);
+    log_message(LDPL_FATAL, "Glink plugin: failed to find Base Address field in Program table");
+    return 4;
 }
 
 
@@ -98,7 +116,7 @@ int fix_up_address(ulonglong *addr, ADDRESS_TYPE* address_type){
     switch(addr_high_nibble){
         case 2:
             //relocatable
-            *addr += 0;
+            *addr += base_addr;
             *address_type = address_type_relocatable;
             break;
         case 5:
@@ -121,7 +139,11 @@ static int read_symbols_from_ghidra_db(const char* gbf_path) {
         return -1;
     }
 
-    read_address_map(&gbuf);
+    if (get_base_address(&gbuf) != 0) {
+        log_message(LDPL_FATAL, "Glink plugin: failed to get base address from ghidra gbf database: %s\n", gbf_path);
+        return -1;
+    }
+
     GBFTable symtab;
     res = symtab.getTable(&gbuf, "Symbols");
     if (res != ErrorCode::E_OK) {
@@ -183,7 +205,15 @@ static int read_symbols_from_ghidra_db(const char* gbf_path) {
                 log_message(LDPL_FATAL, "Glink plugin: failed to get symbol address field of symbol record from ghidra gbf database: %s %d\n", gbf_path, static_cast<int>(res));
                 return -1;
             }
-
+            ADDRESS_TYPE address_type;
+            if (fix_up_address(&addr, &address_type) != 0) {
+                log_message(LDPL_FATAL, "Glink plugin: failed to fix up symbol address from ghidra gbf database: %s\n", gbf_path);
+                return -1;
+            }
+            if(address_type == address_type_external){
+                log_message(LDPL_WARNING, "Glink plugin: symbol %s has external address, skipping\n", sym_name);
+                continue;
+            }
             fprintf(stderr, "symbol: %s, addr: %08llx\n", sym_name, addr);
             ld_plugin_symbol sym = {};
             sym.name = strdup(sym_name);
