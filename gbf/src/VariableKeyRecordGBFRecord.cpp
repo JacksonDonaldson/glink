@@ -97,6 +97,15 @@ ErrorCode VariableKeyRecordGBFRecord::getField(const char* target_name, void* ou
     size_t semicolon_pos = field_names.find(';');
     if (semicolon_pos == std::string::npos) return ErrorCode::E_CORRUPT_FIELD_NAMES;
     std::string after_semicolon = field_names.substr(semicolon_pos + 1);
+
+
+    //check if we're searching for that first key field
+    if (target_name_len == 3 && std::memcmp(target_name, "Key", 3) == 0) {
+        // the key field is not included in the schema field names, but we know it's first and its type is key_type_
+        // and getting it is actually useful in this record type
+        return handleField(key_type_, &record_buffer, out, out_len, true);
+    }
+
     // search for target
     uint target_field_index = static_cast<uint>(-1);
     uint field_count = table_data_->getSchemaFieldTypes().size();
@@ -119,8 +128,9 @@ ErrorCode VariableKeyRecordGBFRecord::getField(const char* target_name, void* ou
     uint record_count = field_types.size();
 
     //skip the first field since it stores the key
-    handleField(key_type_, &record_buffer, out, out_len, false);
-    
+    ErrorCode result = handleField(key_type_, &record_buffer, out, out_len, false);
+    if(result != ErrorCode::E_OK) return result;
+
     for (uint i = 0; i < record_count; ++i) {
         byte field_type = field_types[i];
         byte field_index = i;
@@ -135,7 +145,7 @@ ErrorCode VariableKeyRecordGBFRecord::getField(const char* target_name, void* ou
             ++record_buffer;
         }
         bool want_output = field_index == target_field_index;
-        ErrorCode result = handleField(field_type, &record_buffer, out, out_len, want_output);
+        result = handleField(field_type, &record_buffer, out, out_len, want_output);
         if (result != ErrorCode::E_OK) return result;
         if (want_output) return ErrorCode::E_OK;
     }
@@ -222,7 +232,7 @@ void VariableKeyRecordGBFRecord::print() {
         return;
     }
     std::cout << "gbfrecord:\n";
-    std::string field_names = table_data_->getSchemaFieldNames();
+    std::string field_names = "Key;" + table_data_->getSchemaFieldNames();
     size_t start = field_names.find(';');
     if (start == std::string::npos) {
         std::cout << "  No field names found.\n";
@@ -239,13 +249,21 @@ void VariableKeyRecordGBFRecord::print() {
             std::cout << "  " << field_name << ": ";
             
             // Get the field type
-            if (field_idx < (int)table_data_->getSchemaFieldTypes().size()) {
-                byte field_type = table_data_->getSchemaFieldTypes()[field_idx];
+            if (field_idx < (int)table_data_->getSchemaFieldTypes().size() + 1) {
+                byte field_type;
+
+                if(field_idx == 0){
+                    field_type = key_type_;
+                }
+                else{
+                    field_type = table_data_->getSchemaFieldTypes()[field_idx-1];
+                }
+                
                 
                 // Allocate a buffer and retrieve the field value
                 byte buffer[1024];
                 ErrorCode result = getField(field_name.c_str(), buffer, sizeof(buffer));
-                
+
                 if (result == ErrorCode::E_OK) {
                     // Print based on field type
                     switch (field_type) {
@@ -263,6 +281,7 @@ void VariableKeyRecordGBFRecord::print() {
                             break;
                         case 0x04: // STRING
                             std::cout << (char*)buffer;
+                            // std::cout << (int)buffer[0] << (int)buffer[1] << (int)buffer[2] << (int)buffer[3];
                             break;
                         case 0x05: // BINARY
                             std::cout << "[binary data]";

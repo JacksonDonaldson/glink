@@ -69,8 +69,11 @@ int main(int argc, char ** argv) {
 
     // print_table_and_contents(&gbuf, "Program");
     print_table_and_contents(&gbuf, "Program");
-    print_table_and_contents(&gbuf, "Sub Memory Blocks");
     exit(0);
+    print_table_and_contents(&gbuf, "Sub Memory Blocks");
+    
+    
+    
 
     GBFTable thunk_functions;
     ErrorCode err = thunk_functions.getTable(&gbuf, "Thunka Functions");
