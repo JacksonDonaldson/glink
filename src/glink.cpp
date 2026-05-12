@@ -73,6 +73,8 @@ static int get_unthunked_function_name(GBFTable* symbol_table, GBFTable* thunk_f
 }
 
 ulonglong base_addr = 0;
+ulonglong external_start = 0;
+ulonglong external_length = 0;
 int get_base_address(GBF * gbuf){
     GBFTable program;
     ErrorCode res = program.getTable(gbuf, "Program");
@@ -109,6 +111,47 @@ int get_base_address(GBF * gbuf){
 }
 
 
+int get_external_segment(GBF * gbuf){
+    GBFTable memory_blocks;
+    ErrorCode res = memory_blocks.getTable(gbuf, "Memory Blocks");
+    if(res != ErrorCode::E_OK){
+        log_message(LDPL_FATAL, "Glink plugin: failed to read Memory Blocks table");
+        return 1;
+    }
+
+    auto record = memory_blocks.getFirstRecord();
+    if(!record){
+        log_message(LDPL_FATAL, "Glink plugin: failed to get record from Memory Blocks table");
+        return 2;
+    }
+    do{
+        char name[256] = {0};
+        res = record->getField("Name", name, sizeof(name));
+        if(res != ErrorCode::E_OK){
+            continue;
+        }
+        if(strcmp(name, "EXTERNAL") == 0){
+            res = record->getField("Start Address", &external_start, sizeof(external_start));
+            if(res != ErrorCode::E_OK){
+                log_message(LDPL_FATAL, "Glink plugin: failed to get Start Address from EXTERNAL segment");
+                return 3;
+            }
+            external_start &= ~((ulonglong)0xf << 0x3c); // clear high nibble, which is used for flags
+            external_start += base_addr;
+
+            res = record->getField("Length", &external_length, sizeof(external_length));
+            if(res != ErrorCode::E_OK){
+                log_message(LDPL_FATAL, "Glink plugin: failed to get Length from EXTERNAL segment");
+                return 4;
+            }
+            return 0;
+        }
+    } while(record->next() == ErrorCode::E_OK);
+    log_message(LDPL_WARNING, "Glink plugin: EXTERNAL segment not found in Memory Blocks table");
+    return 5;
+}
+
+
 int fix_up_address(ulonglong *addr, ADDRESS_TYPE* address_type){
     byte addr_high_nibble = (*addr >> 0x3c);
     *addr &= ~((ulonglong)0xf << 0x3c);
@@ -117,7 +160,11 @@ int fix_up_address(ulonglong *addr, ADDRESS_TYPE* address_type){
         case 2:
             //relocatable
             *addr += base_addr;
-            *address_type = address_type_relocatable;
+            if (*addr >= external_start && *addr < external_start + external_length){
+                *address_type = address_type_external;
+            } else {
+                *address_type = address_type_relocatable;
+            }
             break;
         case 5:
             //external
@@ -142,6 +189,11 @@ static int read_symbols_from_ghidra_db(const char* gbf_path) {
     if (get_base_address(&gbuf) != 0) {
         log_message(LDPL_FATAL, "Glink plugin: failed to get base address from ghidra gbf database: %s\n", gbf_path);
         return -1;
+    }
+
+    if (get_external_segment(&gbuf) != 0) {
+        log_message(LDPL_WARNING, "Glink plugin: failed to get external segment from ghidra gbf database: %s\n", gbf_path);
+        // Continue, as external_start and external_length are initialized to 0
     }
 
     GBFTable symtab;
