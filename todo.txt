@@ -1,6 +1,0 @@
-
-- glink: include global symbols
-- ghreader: handle larger targets
-- ghreader: fix memory leaks
-- figure out how to get the right address for plt entries
-- gbf: support non type-1 database entries

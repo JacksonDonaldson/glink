@@ -235,53 +235,80 @@ static int read_symbols_from_ghidra_db(const char* gbf_path) {
             return -1;
         }
 
-        if (sym_type == 5) {
-            char sym_name[256] = {0};
+        char sym_name[256] = {0};
+        ulonglong addr = 0;
+        uint err;
 
-
-            uint err = get_unthunked_function_name(&symtab, &thunk_functions, sym_record.get(), sym_name, sizeof(sym_name));
-            if (err != 0) {
-                log_message(LDPL_FATAL, "Glink plugin: failed to get symbol name field of symbol record from ghidra gbf database: %s %d\n", gbf_path, err);
-                return -1;
-            }
-
-
-
-            if (sym_name[0] == '\0' || std::strcmp(sym_name, "(null)") == 0) {
-                continue;
-            }
-
-            ulonglong addr = 0;
-            res = sym_record->getField("Address", &addr, sizeof(addr));
-            if (res != ErrorCode::E_OK) {
-                log_message(LDPL_FATAL, "Glink plugin: failed to get symbol address field of symbol record from ghidra gbf database: %s %d\n", gbf_path, static_cast<int>(res));
-                return -1;
-            }
-            ADDRESS_TYPE address_type;
-            if (fix_up_address(&addr, &address_type) != 0) {
-                log_message(LDPL_FATAL, "Glink plugin: failed to fix up symbol address from ghidra gbf database: %s\n", gbf_path);
-                return -1;
-            }
-            if(address_type == address_type_external){
-                log_message(LDPL_WARNING, "Glink plugin: symbol %s has external address, skipping\n", sym_name);
-                continue;
-            }
-            fprintf(stderr, "symbol: %s, addr: %08llx\n", sym_name, addr);
-            ld_plugin_symbol sym = {};
-            sym.name = strdup(sym_name);
-            sym.version = nullptr;
-            sym.def = LDPK_DEF;
-            sym.symbol_type = LDST_FUNCTION;
-            sym.visibility = LDPV_DEFAULT;
-            sym.section_kind = LDSSK_DEFAULT;
-            sym.size = 0;
-            sym.comdat_key = nullptr;
-            sym.resolution = LDPR_PREVAILING_DEF;
-
-            symbols.push_back(sym);
-            sym_addrs.push_back(addr);
-            sym_count++;
+        // fprintf(stderr, "Symbol Type: %d\n", (symbol_type)sym_type);
+        switch((symbol_type)sym_type){
+            case symbol_type_function:
+                err = get_unthunked_function_name(&symtab, &thunk_functions, sym_record.get(), sym_name, sizeof(sym_name));
+                if (err != 0) {
+                    log_message(LDPL_FATAL, "Glink plugin: failed to get symbol name field of symbol record from ghidra gbf database: %s %d\n", gbf_path, err);
+                    return -1;
+                }
+                if (sym_name[0] == '\0' || std::strcmp(sym_name, "(null)") == 0) {
+                    continue;
+                }
+                
+                res = sym_record->getField("Address", &addr, sizeof(addr));
+                if (res != ErrorCode::E_OK) {
+                    log_message(LDPL_FATAL, "Glink plugin: failed to get symbol address field of symbol record from ghidra gbf database: %s %d\n", gbf_path, static_cast<int>(res));
+                    return -1;
+                }
+                ADDRESS_TYPE address_type;
+                if (fix_up_address(&addr, &address_type) != 0) {
+                    log_message(LDPL_FATAL, "Glink plugin: failed to fix up symbol address from ghidra gbf database: %s\n", gbf_path);
+                    return -1;
+                }
+                if(address_type == address_type_external){
+                    // log_message(LDPL_WARNING, "Glink plugin: symbol %s has external address, skipping\n", sym_name);
+                    continue;
+                }
+                break;
+            case symbol_type_label:
+            case symbol_type_global:
+                res = sym_record->getField("Name", sym_name, sizeof(sym_name));
+                if (res != ErrorCode::E_OK) {
+                    log_message(LDPL_FATAL, "Glink plugin: failed to get symbol name field of global symbol record from ghidra gbf database: %s %d\n", gbf_path, static_cast<int>(res));
+                    return -1;
+                }
+                if (sym_name[0] == '\0' || std::strcmp(sym_name, "(null)") == 0) {
+                    continue;
+                }
+                res = sym_record->getField("Address", &addr, sizeof(addr));
+                if (res != ErrorCode::E_OK) {
+                    log_message(LDPL_FATAL, "Glink plugin: failed to get symbol address field of global symbol record from ghidra gbf database: %s %d\n", gbf_path, static_cast<int>(res));
+                    return -1;
+                }
+                if (fix_up_address(&addr, &address_type) != 0) {
+                    log_message(LDPL_FATAL, "Glink plugin: failed to fix up global symbol address from ghidra gbf database: %s\n", gbf_path);
+                    return -1;
+                }
+                if(address_type == address_type_external){
+                    continue;
+                }
+                break;
+            default:
+                continue; // skip unsupported symbol types
         }
+
+        fprintf(stderr, "Symbol: %s, Address: 0x%08llx\n", sym_name, addr);
+        ld_plugin_symbol sym = {};
+        sym.name = strdup(sym_name);
+        sym.version = nullptr;
+        sym.def = LDPK_DEF;
+        sym.symbol_type = LDST_FUNCTION;
+        sym.visibility = LDPV_DEFAULT;
+        sym.section_kind = LDSSK_DEFAULT;
+        sym.size = 0;
+        sym.comdat_key = nullptr;
+        sym.resolution = LDPR_PREVAILING_DEF;
+
+        symbols.push_back(sym);
+        sym_addrs.push_back(addr);
+        sym_count++;
+        
     } while (sym_record->next() == ErrorCode::E_OK);
 
     return 0;

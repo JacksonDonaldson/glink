@@ -69,14 +69,11 @@ int main(int argc, char ** argv) {
 
     // print_table_and_contents(&gbuf, "Program");
     print_table_and_contents(&gbuf, "Program");
-    exit(0);
-    print_table_and_contents(&gbuf, "Sub Memory Blocks");
-    
-    
+    print_table_and_contents(&gbuf, "Memory Blocks");
     
 
     GBFTable thunk_functions;
-    ErrorCode err = thunk_functions.getTable(&gbuf, "Thunka Functions");
+    ErrorCode err = thunk_functions.getTable(&gbuf, "Thunk Functions");
     std::printf("get_gbftable: %d\n", err);
     
     thunk_functions.print();
